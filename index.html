@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>PHYSICS</title>
+    <style>
+        :root { --bg: #050607; --accent: #00ffcc; --gold: #ffcc00; --moon: #e0ffff; }
+        * { margin: 0; padding: 0; box-sizing: border-box; cursor: none; }
+        body { background: var(--bg); overflow: hidden; height: 100vh; width: 100vw; }
+        canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+        
+        .moon {
+            position: fixed; top: 15%; right: 15%; width: 120px; height: 120px;
+            background: radial-gradient(circle at 30% 30%, var(--moon) 0%, #a0ced9 100%);
+            border-radius: 50%; z-index: -2;
+            box-shadow: 0 0 60px rgba(224, 255, 255, 0.2), 0 0 120px rgba(0, 255, 204, 0.1);
+        }
+        
+        .fog-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 1500;
+            backdrop-filter: blur(15px) saturate(1.2);
+            background: rgba(5, 6, 7, 0.3);
+            mask-image: radial-gradient(circle, transparent 30%, black 100%);
+        }
+        
+        #cursor { width: 12px; height: 12px; border: 1px solid var(--gold); position: fixed; pointer-events: none; z-index: 10000; transform: translate(-50%, -50%) rotate(45deg); box-shadow: 0 0 8px var(--gold); }
+        #glass-streaks { z-index: 1600; opacity: 0.3; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div class="moon"></div>
+    <canvas id="mainCanvas"></canvas>
+    <div class="fog-overlay"></div>
+    <canvas id="glass-streaks"></canvas>
+    <div id="cursor"></div>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const glassCanvas = document.getElementById('glass-streaks');
+        const gCtx = glassCanvas.getContext('2d');
+
+        let audioCtx, systemActive = false, isTreeActive = false;
+        let treeNodes = [], streaks = [], stars = [], fireflies = [], grassBlades = [];
+        let mouseX = 0, mouseY = 0;
+
+        function init() {
+            canvas.width = glassCanvas.width = window.innerWidth;
+            canvas.height = glassCanvas.height = window.innerHeight;
+            
+            grassBlades = [];
+            for(let i = 0; i < canvas.width / 6; i++) {
+                grassBlades.push({
+                    x: Math.random() * canvas.width,
+                    h: 35 + Math.random() * 20,
+                    w: 1,
+                    flex: 0.5 + Math.random() * 0.8,
+                    off: Math.random() * 100,
+                    alpha: 0.15 + Math.random() * 0.1
+                });
+            }
+
+            stars = [];
+            for(let i = 0; i < 250; i++) stars.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, size: Math.random()*1.1, opacity: Math.random() });
+            
+            fireflies = [];
+            for(let i = 0; i < 30; i++) {
+                fireflies.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    vx: (Math.random()-0.5), vy: (Math.random()-0.5),
+                    s: 1.2 + Math.random() * 1.5,
+                    ang: Math.random() * Math.PI * 2,
+                    fear: 0
+                });
+            }
+        }
+
+        function growTree(x, y, angle, len, depth, parent = null) {
+            if (depth <= 0) return;
+
+            const segments = [];
+            const segmentCount = 4; 
+            for(let i = 0; i <= segmentCount; i++) {
+                const ratio = i / segmentCount;
+                const jitter = (Math.random() - 0.5) * (depth * 0.8);
+                segments.push({
+                    relX: Math.cos(angle) * len * ratio + jitter,
+                    relY: Math.sin(angle) * len * ratio + jitter,
+                    phase: Math.random() * Math.PI * 2 // Индивидуальная фаза для покачивания
+                });
+            }
+
+            const node = { 
+                x1: x, y1: y, 
+                segments: segments,
+                x2: x + segments[segmentCount].relX, 
+                y2: y + segments[segmentCount].relY, 
+                d: depth, 
+                a: 0,
+                parent: parent 
+            };
+            
+            treeNodes.push(node);
+
+            setTimeout(() => {
+                growTree(node.x2, node.y2, angle - 0.52, len * 0.79, depth - 1, node);
+                growTree(node.x2, node.y2, angle + 0.52, len * 0.79, depth - 1, node);
+            }, 80);
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            gCtx.clearRect(0, 0, glassCanvas.width, glassCanvas.height);
+            
+            const time = Date.now();
+            const wind = 0.15 + Math.sin(time * 0.0008) * 0.1;
+
+            // Звезды
+            stars.forEach(s => {
+                ctx.globalAlpha = 0.3; ctx.fillStyle = "#fff";
+                ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctx.fill();
+            });
+
+            // Трава
+            grassBlades.forEach(b => {
+                ctx.globalAlpha = b.alpha; ctx.strokeStyle = '#00ffcc'; ctx.lineWidth = b.w;
+                const dx = mouseX - b.x;
+                const dist = Math.abs(dx);
+                let interactionBend = dist < 100 ? (dx > 0 ? -1 : 1) * ((100 - dist) / 100) * 50 : 0;
+                const windBend = (wind * 120 * b.flex) + Math.sin(time * 0.002 + b.off) * 5;
+                ctx.beginPath(); ctx.moveTo(b.x, canvas.height);
+                ctx.quadraticCurveTo(b.x, canvas.height - b.h*0.5, b.x + windBend + interactionBend, canvas.height - b.h);
+                ctx.stroke();
+            });
+
+            // Дерево с анимацией ветра
+            if (isTreeActive) {
+                treeNodes.forEach(n => {
+                    n.a = Math.min(n.a + 0.02, 1);
+                    if (n.parent) { n.x1 = n.parent.x2; n.y1 = n.parent.y2; }
+                    
+                    ctx.globalAlpha = n.a;
+                    ctx.strokeStyle = '#00ffcc';
+                    ctx.lineWidth = n.d * 1.6;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+
+                    ctx.beginPath();
+                    ctx.moveTo(n.x1, n.y1);
+                    
+                    n.segments.forEach((seg, idx) => {
+                        // Сила покачивания: чем выше (меньше d), тем сильнее мотает
+                        const swayPower = (9 - n.d) * 1.5; 
+                        const sway = Math.sin(time * 0.0015 + (n.x1 * 0.01) + seg.phase) * swayPower * wind;
+                        
+                        const tx = n.x1 + (seg.relX + sway) * n.a;
+                        const ty = n.y1 + seg.relY * n.a;
+                        
+                        ctx.lineTo(tx, ty);
+                        if(idx === n.segments.length - 1) {
+                            n.x2 = tx; n.y2 = ty;
+                        }
+                    });
+                    ctx.stroke();
+                });
+            }
+
+            // Светлячки
+            if(systemActive) {
+                fireflies.forEach(f => {
+                    if (f.fear <= 0) {
+                        const dx = mouseX - f.x; const dy = mouseY - f.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist > 20) { f.vx += dx * 0.00008; f.vy += dy * 0.00008; }
+                    } else { f.fear -= 0.01; }
+                    f.ang += 0.02; 
+                    f.vx += Math.cos(time * 0.0015 + f.ang * 10) * 0.15;
+                    f.vy += Math.sin(time * 0.002 + f.ang * 5) * 0.15;
+                    f.vx *= 0.97; f.vy *= 0.97; 
+                    f.x += f.vx; f.y += f.vy;
+                    const pulse = 0.3 + Math.sin(time * 0.004 + f.ang) * 0.5;
+                    ctx.globalAlpha = Math.max(0.1, pulse);
+                    ctx.shadowBlur = 18; ctx.shadowColor = '#ffaa00'; ctx.fillStyle = '#ffcc00';
+                    ctx.beginPath(); ctx.arc(f.x, f.y, f.s, 0, Math.PI * 2); ctx.fill();
+                    ctx.shadowBlur = 0;
+                });
+            }
+
+            // Капли
+            gCtx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+            if(Math.random() > 0.96) streaks.push({x: Math.random()*canvas.width, y: -20, len: 12, s: 2});
+            streaks.forEach((s, i) => {
+                gCtx.beginPath(); gCtx.moveTo(s.x, s.y); gCtx.lineTo(s.x, s.y + s.len); gCtx.stroke();
+                s.y += s.s; if(s.y > canvas.height) streaks.splice(i, 1);
+            });
+
+            requestAnimationFrame(render);
+        }
+
+        document.addEventListener('mousedown', () => {
+            if(!systemActive) {
+                systemActive = true;
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+                const gain = audioCtx.createGain(); gain.gain.value = 0.04;
+                const node = audioCtx.createScriptProcessor(4096, 1, 1);
+                node.onaudioprocess = (e) => {
+                    const out = e.outputBuffer.getChannelData(0);
+                    for (let i = 0; i < out.length; i++) out[i] = Math.random() * 2 - 1;
+                };
+                const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 750;
+                node.connect(f); f.connect(gain); gain.connect(audioCtx.destination);
+                setTimeout(() => { isTreeActive = true; growTree(window.innerWidth/2, window.innerHeight, -Math.PI/2, 210, 8); }, 500);
+            } else {
+                fireflies.forEach(f => {
+                    const dx = f.x - mouseX; const dy = f.y - mouseY;
+                    const force = 80 / Math.max(10, Math.sqrt(dx*dx + dy*dy));
+                    f.vx += dx * force * 0.4; f.vy += dy * force * 0.4;
+                    f.fear = 1.5;
+                });
+            }
+        });
+
+        document.addEventListener('mousemove', e => {
+            mouseX = e.clientX; mouseY = e.clientY;
+            document.getElementById('cursor').style.left = mouseX + 'px';
+            document.getElementById('cursor').style.top = mouseY + 'px';
+        });
+
+        window.addEventListener('resize', init);
+        init();
+        render();
+    </script>
+
+</body>
+</html>
